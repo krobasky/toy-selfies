@@ -4,6 +4,99 @@ import torch.nn as nn
 from torch_geometric.nn import GCNConv
 
 from torch_geometric.utils import to_dense_adj
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Categorical
+import rdkit
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from rdkit import RDLogger
+import random
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+
+class MolecularEnv:
+    def __init__(self):
+        self.state = None
+        self.current_molecule = None  # Keep track of the current molecule
+
+    def reset(self):
+        # Start with a simple molecule, e.g., benzene
+        self.current_molecule = Chem.MolFromSmiles('c1ccccc1')
+        fp = AllChem.GetMorganFingerprintAsBitVect(self.current_molecule, 2, nBits=2048)
+        self.state = torch.tensor(fp, dtype=torch.float32).unsqueeze(0)
+        return self.state
+
+    def step(self, action):
+        # Apply the action to the current molecule to create a new molecule
+        # For simplicity, let's say each action corresponds to adding a different functional group
+        
+        # Convert the current molecule to a RWMol for editing
+        rw_mol = Chem.RWMol(self.current_molecule)
+
+        if action == 0:
+            # Example action: Add an OH group to a random carbon
+            carbon_indices = [atom.GetIdx() for atom in rw_mol.GetAtoms() if atom.GetAtomicNum() == 6]
+            if carbon_indices:
+                chosen_carbon = random.choice(carbon_indices)
+                rw_mol.AddAtom(Chem.Atom(8))  # Add oxygen
+                rw_mol.AddBond(chosen_carbon, rw_mol.GetNumAtoms() - 1, order=Chem.BondType.SINGLE)
+        
+        # Other actions can correspond to other modifications, e.g., adding different functional groups
+        
+        # Update the current molecule
+        tmp_mol = rw_mol.GetMol()
+
+        # After modifying the molecule:
+        try:
+            # Sanitize the molecule to ensure its consistency and to compute properties
+            Chem.SanitizeMol(tmp_mol)
+            
+            # Update the state to reflect the changes
+            fp = AllChem.GetMorganFingerprintAsBitVect(tmp_mol, 2, nBits=2048)
+            self.current_molecule = tmp_mol
+            self.state = torch.tensor(fp, dtype=torch.float32).unsqueeze(0)
+        except (Chem.rdchem.KekulizeException, Chem.rdchem.AtomValenceException):
+            # Handle cases where the molecule cannot be kekulized (usually due to valence issues)
+            pass  # Here you can decide what to do with such molecules, e.g., discard or replace
+
+
+        # For now, return a random reward and termination condition
+        reward = torch.randn(1)
+        done = torch.rand(1) > 0.95
+
+        return self.state, reward, done
+
+    def orig_step(self, action):
+        # This should modify the molecule based on the action; simplified here
+        reward = torch.randn(1)
+        done = torch.rand(1) > 0.95
+        # Simulate a change in the molecule (this should be more meaningful)
+        self.current_molecule = Chem.MolFromSmiles('c1ccncc1')  # Example change
+        return self.state, reward, done
+
+    def get_current_molecule(self):
+        return self.current_molecule
+
+# Define the policy model that takes a fingerprint and predicts a probability vector for "actions"
+class Policy(nn.Module):
+    def __init__(self, input_size=2048, output_size=10):
+        super(Policy, self).__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(input_size, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_size),
+            nn.Softmax(dim=-1)
+        )
+        self.saved_log_probs = []
+        self.rewards = []
+
+    def forward(self, x):
+        return self.layers(x)
+
 class GCNAutoencoder(pl.LightningModule):
     def __init__(self, in_channels, hidden_dim=64, lr=0.001, batch_size=32):
         super().__init__()
