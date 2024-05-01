@@ -71,8 +71,6 @@ class SELFIESDataModule(LightningDataModule):
         return DataLoader(self.val_dataset, batch_size=self.val_batch_size, shuffle=False, pin_memory=True, drop_last = self.drop_last)
 
 
-VOCAB_FILE = 'vocab.json'
-# see notes in _vocab_from_file on how this file was created
 
 def smiles_to_selfies(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -81,10 +79,12 @@ def smiles_to_selfies(smiles):
         return sf.encoder(smiles)
     return None
 
-def _build_vocab(dataset, start_token, pad_token):
+VOCAB_FILE = 'config/vocab.json'
+# see notes in _vocab_from_file on how this file was created
+def _build_vocab(dataset, start_token, pad_token, vocab_file=VOCAB_FILE):
     from os.path import exists
 
-    if exists(VOCAB_FILE):
+    if exists(vocab_file):
         # see notes in _vocab_from_file on how this file was created
         return(_vocab_from_file())
     else:
@@ -99,8 +99,8 @@ def _build_vocab(dataset, start_token, pad_token):
         token_to_idx[start_token] = len(token_to_idx) # Add a start token
         return start_token, pad_token, token_to_idx
 
-def _vocab_from_file():
-    '''Notes on how VOCAB_FILE was created:
+def _vocab_from_file(vocab_file=VOCAB_FILE):
+    '''Notes on how vocab_file was created:
 
  1. _build_vocab is run once to get a list of all the tokens present in the QM9 dataset
 
@@ -193,7 +193,7 @@ def _vocab_from_file():
 '''
     import json
     # Open the JSON file and load it into a dictionary
-    with open(VOCAB_FILE, 'r') as json_file:
+    with open(vocab_file, 'r') as json_file:
         vocab = json.load(json_file)
     idx_to_token = {vocab[token]: token for token in vocab.keys()}
     pad_token = idx_to_token[0] # its convention to put pad at 0...

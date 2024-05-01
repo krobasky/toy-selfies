@@ -2,13 +2,14 @@ import torch
 import pytorch_lightning as pl
 import torch.nn as nn
 from torch_geometric.nn import GCNConv
-
-from torch_geometric.utils import to_dense_adj
-
-import torch
-import torch.nn as nn
+from torch.nn import functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
+from torch_geometric.utils import to_dense_adj
+
+from einops import rearrange
+
+
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -96,6 +97,106 @@ class Policy(nn.Module):
 
     def forward(self, x):
         return self.layers(x)
+
+
+class TransformerVAE(pl.LightningModule):
+    def __init__(self, vocab_size, max_length, d_model=512, nhead=8, num_layers=3, dim_feedforward=2048, dropout=0.1):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.max_length = max_length
+        self.d_model = d_model
+
+        # Transformer Encoder settings
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Transformer Decoder settings
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        # Positional Encoding
+        self.pos_encoder = nn.Parameter(torch.randn(1, max_length, d_model))
+
+        # Embedding layer
+        self.embedding = nn.Embedding(vocab_size, d_model)
+
+        # Latent space and reconstruction layers
+        self.to_latent = nn.Linear(d_model, 2 * d_model)  # Output both mu and logvar
+        self.from_latent = nn.Linear(d_model, d_model)
+
+        # Output layer
+        self.output_layer = nn.Linear(d_model, vocab_size)
+
+        self.train_losses = []
+        self.val_losses = []
+        
+
+    def encode(self, src):
+        src = self.embedding(src) + self.pos_encoder[:, :src.size(1)]
+        encoded_src = self.encoder(src)
+        mu_logvar = self.to_latent(encoded_src.mean(dim=1))
+        mu, log_var = mu_logvar.chunk(2, dim=-1)
+        return mu, log_var
+
+    def reparameterize(self, mu, log_var):
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z, target_length):
+        # Process the latent vector z to shape it for the transformer decoder input
+        z = self.from_latent(z).unsqueeze(1).repeat(1, target_length, 1)
+        z += self.pos_encoder[:, :target_length]
+        # Since the decoder in Transformer expects a 'memory' (outputs from the encoder),
+        # we will use the processed latent vector as a pseudo-memory.
+        # It is necessary to duplicate the latent representation to fulfill the API requirements
+        # although semantically it does not function as typical memory does in Transformer.
+        output = self.decoder(z, z)
+        return self.output_layer(output)
+
+    def forward(self, src, src_mask=None):
+        mu, log_var = self.encode(src)
+        z = self.reparameterize(mu, log_var)
+        return self.decode(z, src.size(1)), mu, log_var
+
+    def training_step(self, batch, batch_idx):
+        x = batch
+        output, mu, log_var = self.forward(x)
+        recon_loss = F.cross_entropy(output.view(-1, self.vocab_size), x.view(-1))
+        kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        loss = recon_loss + kl_loss
+        self.log("train_loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x = batch
+        output, mu, log_var = self.forward(x)
+        recon_loss = F.cross_entropy(output.view(-1, self.vocab_size), x.view(-1))
+        kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        loss = recon_loss + kl_loss
+        self.log("val_loss", loss)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        return optimizer
+
+    def on_train_epoch_end(self):
+        # Log the average training loss of the epoch
+        train_loss_avg = self.trainer.callback_metrics['train_loss'].item()
+        self.train_losses.append(train_loss_avg)
+        
+    def on_validation_epoch_end(self):
+        # Log the average validation loss of the epoch
+        val_loss_avg = self.trainer.callback_metrics['val_loss'].item()
+        self.val_losses.append(val_loss_avg)
+
+
+
 
 class GCNAutoencoder(pl.LightningModule):
     def __init__(self, in_channels, hidden_dim=64, lr=0.001, batch_size=32):

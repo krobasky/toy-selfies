@@ -33,28 +33,34 @@ def decode_indices_to_selfies(indices, vocab):
     idx2vocab = {vocab[token]: token for token in vocab.keys() }
     return ''.join(idx2vocab[idx] for idx in indices if idx != 0)  # Assuming PAD_TOKEN is 0
 
-def generate_and_decode(model, vocab, max_tokens, start_token = '<start>', pad_token = '<pad>', z=None):
+def generate_and_decode(model, vocab, max_tokens, start_token = '<start>', pad_token = '<pad>', z=None, latent_dim=None ):
     model.eval()
     with torch.no_grad():
         generated_indices, z = generate_selfies(model, max_length=max_tokens, 
                                                 start_token_index=vocab[start_token], 
                                                 pad_token_index=vocab[pad_token], 
-                                                z=z)
+                                                z=z,
+                                                latent_dim=latent_dim)
     selfies_string = decode_indices_to_selfies(generated_indices.squeeze().tolist(), vocab)
     return selfies_string, z, generated_indices
 
-def generate_selfies(model, max_length, start_token_index=55, pad_token_index=0, z=None, num_samples=1):
+def generate_selfies(model, max_length, start_token_index=55, pad_token_index=0, z=None, latent_dim=None, num_samples=1):
     if z is None:
         # Sample from the standard normal distribution, which is what the VAE's latent space assumes
-        z = torch.randn(num_samples, model.latent_dim)
+        if latent_dim is None:
+            z = torch.randn(num_samples, model.latent_dim)
+            logits = model.decoder(z)
+        else:
+            # transformer VAE decoder is peculiar
+            z = torch.randn(num_samples, latent_dim)
+            logits = model.decoder(z,z)
+
     else:
         # Optionally, a deterministic z can be passed in, but it would usually be sampled
         pass
 
     generated = torch.zeros(num_samples, max_length, dtype=torch.long)
 
-    # Decode the sampled z
-    logits = model.decoder(z)
     probs = torch.exp(logits)
 
     for i in range(max_length):

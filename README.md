@@ -12,6 +12,7 @@ This repository demonstrates modelling over SELFIES strings. According to selfie
 
 ```
 src/vae.ipynb: SELFIES generation demonstration by simple, pytorch-implemented VAE model
+src/tx-vae.ipynb: Transformer variational autoencoder (VAE) demonstration.
 src/gcn.ipynb: Pytorch Graph Convolutional Network Autoencoder demonstration
 src/rl.ipynb: Pytorch Reinforced Learning demonstration for molecular design
 src/config/vocab.json: SELFIES vocabulary for QM9 dataset from the “MoleculeNet: A Benchmark for Molecular Machine Learning” paper, consisting of about 130,000 molecules.
@@ -27,5 +28,6 @@ src/bd/log.py: simple logging methods to support clearn code
 See the notebooks notebook for usage:
 
  -  `src/vae.ipynb`
+ -  `src/tx-vae.ipynb`
  -  `src/gcn.ipynb`
  -  `src/rl.ipynb`
